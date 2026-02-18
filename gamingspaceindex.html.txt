@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameSpace: Minus with AI Bots</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root { --primary: #00d4ff; --bg: #0f0c29; --card-w: 50px; --card-h: 75px; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; text-align: center; margin: 0; overflow: hidden; height: 100vh; }
+        
+        .game-header { display: flex; justify-content: space-around; background: #1a1a3a; padding: 10px; border-bottom: 2px solid var(--primary); font-size: 0.85em; }
+
+        .table { height: 55vh; position: relative; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle, #1b2a4e 0%, #0f0c29 100%); }
+        
+        /* Bot Positions */
+        .bot { position: absolute; font-size: 0.7em; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 10px; border: 1px solid var(--primary); }
+        .bot-top { top: 10px; }
+        .bot-left { left: 10px; top: 40%; transform: rotate(-90deg); }
+        .bot-right { right: 10px; top: 40%; transform: rotate(90deg); }
+
+        .center-area { width: 160px; height: 120px; border: 1px dashed rgba(255,255,255,0.2); position: relative; border-radius: 15px; }
+
+        .hand { position: fixed; bottom: 15px; left: 0; right: 0; display: flex; gap: 5px; overflow-x: auto; padding: 10px; justify-content: center; }
+
+        /* Card Visuals */
+        .card { width: var(--card-w); height: var(--card-h); background: white; color: black; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; font-weight: bold; border: 1px solid #333; cursor: pointer; transition: 0.2s; box-shadow: 0 3px 6px rgba(0,0,0,0.4); }
+        .suit-Spades, .suit-Clubs { color: black; } .suit-Hearts, .suit-Diamonds { color: red; }
+        .card.played { position: absolute; transition: all 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+
+        .bid-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .bid-box { background: #1b2a4e; padding: 25px; border-radius: 20px; border: 2px solid var(--primary); width: 80%; }
+        .btn { background: var(--primary); border: none; padding: 12px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="game-header">
+    <div id="p-stat">Target: ? | Won: 0</div>
+    <div id="trump-stat">Trump: ?</div>
+</div>
+
+<div class="table">
+    <div class="bot bot-top">Bot 2 (13 Cards)</div>
+    <div class="bot bot-left">Bot 1 (13 Cards)</div>
+    <div class="bot bot-right">Bot 3 (13 Cards)</div>
+    
+    <div class="center-area" id="center-area">
+        <p id="game-msg" style="font-size: 0.7em; margin-top: 40px; color: var(--primary);">Bid to Start</p>
+    </div>
+</div>
+
+<div class="hand" id="player-hand"></div>
+
+<div id="bid-overlay" class="bid-overlay">
+    <div class="bid-box">
+        <h3 style="margin-top:0;">GameSpace Minus</h3>
+        <p>Announce Your Call (Hands):</p>
+        <input type="number" id="bid-count" min="5" max="13" value="5" style="width: 80%; padding: 8px;">
+        <p>Select Trump (Kaat):</p>
+        <select id="trump-suit" style="width: 80%; padding: 8px;">
+            <option value="Spades">Spades ♠</option>
+            <option value="Hearts">Hearts ♥</option>
+            <option value="Diamonds">Diamonds ♦</option>
+            <option value="Clubs">Clubs ♣</option>
+        </select>
+        <button class="btn" onclick="startRound()">Confirm</button>
+    </div>
+</div>
+
+<script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+
+    const suitIcons = { Spades: "♠", Hearts: "♥", Diamonds: "♦", Clubs: "♣" };
+    let playerHand = [], bots = [[], [], []], trump = "", target = 0, won = 0;
+
+    function initDeck() {
+        let deck = [];
+        ["Spades", "Hearts", "Diamonds", "Clubs"].forEach(s => {
+            for (let v = 1; v <= 13; v++) deck.push({ suit: s, value: v });
+        });
+        deck.sort(() => Math.random() - 0.5);
+        playerHand = deck.slice(0, 13).sort((a,b) => a.suit.localeCompare(b.suit) || b.value - a.value);
+        bots = [deck.slice(13, 26), deck.slice(26, 39), deck.slice(39, 52)];
+        renderPlayerHand();
+    }
+
+    function renderPlayerHand() {
+        const handDiv = document.getElementById('player-hand');
+        handDiv.innerHTML = '';
+        playerHand.forEach((card, i) => {
+            const el = document.createElement('div');
+            el.className = `card suit-${card.suit}`;
+            const val = card.value === 1 ? 'A' : card.value === 11 ? 'J' : card.value === 12 ? 'Q' : card.value === 13 ? 'K' : card.value;
+            el.innerHTML = `<span>${val}</span><span>${suitIcons[card.suit]}</span>`;
+            el.onclick = () => playRound(i);
+            handDiv.appendChild(el);
+        });
+    }
+
+    function startRound() {
+        target = document.getElementById('bid-count').value;
+        trump = document.getElementById('trump-suit').value;
+        document.getElementById('bid-overlay').style.display = 'none';
+        document.getElementById('p-stat').innerText = `Target: ${target} | Won: 0`;
+        document.getElementById('trump-stat').innerText = `Trump: ${trump}`;
+        document.getElementById('game-msg').innerText = "Your Turn";
+        tg.HapticFeedback.notificationOccurred('success');
+    }
+
+    function playRound(index) {
+        if(document.getElementById('bid-overlay').style.display === 'block') return;
+        
+        const playerCard = playerHand[index];
+        playerHand.splice(index, 1);
+        renderPlayerHand();
+        
+        clearTable();
+        showCardOnTable(playerCard, 'bottom');
+
+        // Bot AI: Simple Logic (Throws a random card for now)
+        setTimeout(() => {
+            showCardOnTable(bots[0].pop(), 'left');
+            setTimeout(() => {
+                showCardOnTable(bots[1].pop(), 'top');
+                setTimeout(() => {
+                    showCardOnTable(bots[2].pop(), 'right');
+                    resolveWinner(playerCard);
+                }, 400);
+            }, 400);
+        }, 400);
+    }
+
+    function showCardOnTable(card, pos) {
+        const center = document.getElementById('center-area');
+        const el = document.createElement('div');
+        el.className = `card played suit-${card.suit}`;
+        const val = card.value === 1 ? 'A' : card.value === 11 ? 'J' : card.value === 12 ? 'Q' : card.value === 13 ? 'K' : card.value;
+        el.innerHTML = `<span>${val}</span><span>${suitIcons[card.suit]}</span>`;
+        
+        // Position logic
+        if(pos === 'bottom') { el.style.bottom = "-20px"; el.style.left = "55px"; }
+        if(pos === 'left') { el.style.left = "-20px"; el.style.top = "20px"; }
+        if(pos === 'top') { el.style.top = "-20px"; el.style.left = "55px"; }
+        if(pos === 'right') { el.style.right = "-20px"; el.style.top = "20px"; }
+
+        center.appendChild(el);
+        tg.HapticFeedback.impactOccurred('light');
+    }
+
+    function clearTable() {
+        document.getElementById('center-area').innerHTML = '';
+    }
+
+    function resolveWinner(pCard) {
+        // Logic: Player wins this trick for simulation (Can be expanded)
+        won++;
+        document.getElementById('p-stat').innerText = `Target: ${target} | Won: ${won}`;
+        document.getElementById('game-msg').innerText = "You won this trick!";
+        
+        if(playerHand.length === 0) {
+            const finalMinus = Math.max(0, target - won);
+            alert(`Game Over! Minus Points: ${finalMinus}`);
+            location.reload();
+        }
+    }
+
+    initDeck();
+</script>
+</body>
+</html>
